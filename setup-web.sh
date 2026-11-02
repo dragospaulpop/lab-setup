@@ -58,9 +58,10 @@ persist() {                                                      # add a line to
 
 add_path() { persist "export PATH=\"$1:\$PATH\""; }
 
-fetch() { run curl -fsSL --retry 3 -o "$2" "$1"; }
+fetch() { run curl -fsSL --connect-timeout 30 --retry 3 -o "$2" "$1"; }
 
 check_sha256() {                                                 # check_sha256 FILE EXPECTED
+  [ -n "$2" ] || { say "    no checksum found for $1: not installing a download that cannot be checked"; return 1; }
   if [ "$DRY" = 1 ]; then say "    > check the SHA-256 of $1 against $2"; return 0; fi
   local got
   if command -v sha256sum >/dev/null 2>&1; then got="$(sha256sum "$1" | cut -d' ' -f1)"; else got="$(shasum -a 256 "$1" | cut -d' ' -f1)"; fi
