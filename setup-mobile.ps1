@@ -69,6 +69,12 @@ function Set-UserEnv($name, $value) {
   Set-Item -Path "Env:$name" -Value $value
 }
 
+function Get-Text($url) {            # a web page as text (aka.ms serves checksum files as raw bytes)
+  $r = Invoke-WebRequest -Uri $url -UseBasicParsing
+  if ($r.Content -is [byte[]]) { return [Text.Encoding]::ASCII.GetString($r.Content) }
+  return $r.Content
+}
+
 function Download($url, $file) {
   Run "download $url" { Invoke-WebRequest -Uri $url -OutFile $file -UseBasicParsing }
 }
@@ -142,7 +148,7 @@ $Tools = @(
      Setup = {   # winget's Node package is machine-wide (admin); the official zip is not
        $idx = @(Invoke-RestMethod https://nodejs.org/dist/index.json | ForEach-Object { $_ } | Where-Object { $_.lts })[0]   # ForEach: Windows PowerShell 5.1 hands the JSON array over as one object
        $v = $idx.version
-       $sums = (Invoke-WebRequest "https://nodejs.org/dist/$v/SHASUMS256.txt" -UseBasicParsing).Content
+       $sums = Get-Text "https://nodejs.org/dist/$v/SHASUMS256.txt"
        $sha = ($sums -split "`n" | Where-Object { $_ -match "node-$v-win-x64.zip" } | Select-Object -First 1) -split '\s+' | Select-Object -First 1
        Unpack-Zip "https://nodejs.org/dist/$v/node-$v-win-x64.zip" $sha $NodeDir
        Add-UserPath $NodeDir
@@ -167,7 +173,7 @@ $Tools = @(
        } else {
          $url = 'https://aka.ms/download-jdk/microsoft-jdk-21-windows-x64.zip'
          $sha = $null
-         $sha = ((Invoke-WebRequest "$url.sha256sum.txt" -UseBasicParsing).Content -split "\s+")[0]
+         $sha = ((Get-Text "$url.sha256sum.txt") -split "\s+")[0]
          Unpack-Zip $url $sha $JdkDir
          Set-UserEnv 'JAVA_HOME' $JdkDir
          Add-UserPath "$JdkDir\bin"
