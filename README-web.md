@@ -6,8 +6,8 @@
 | id | Tool | Needed | Windows route (your user, no admin) | macOS / Linux route |
 | --- | --- | --- | --- | --- |
 | `git` | Git | 2.30+ | `winget install Git.Git --scope user` | `brew install git`; `xcode-select --install`; `apt-get install git` |
-| `gh` | GitHub CLI | 2.40+ | `winget install GitHub.cli --scope user` (the portable zip) | `brew install gh`; `apt-get install gh` |
-| `node` | Node.js LTS | 22+ | the official zip from nodejs.org into `%LOCALAPPDATA%\node`, SHA-256 from `SHASUMS256.txt` (winget's package is machine-wide and **needs admin**) | `brew install node`; else the official tarball into `~/.local/node` |
+| `gh` | GitHub CLI | 2.40+ | `winget install GitHub.cli --scope user` (the portable zip) | `brew install gh`; Linux: GitHub's apt repository |
+| `node` | Node.js LTS | 22+ | the official zip from nodejs.org into `%LOCALAPPDATA%\node`, SHA-256 from `SHASUMS256.txt` (winget's package is machine-wide and **needs admin**) | `brew install node@<LTS major>`; else the official tarball into `~/.local/node` |
 | `bun` | Bun | 1.1+ | `winget install Oven-sh.Bun` (portable zip) | `brew install oven-sh/bun/bun`; else bun.sh's install script |
 | `code` | VS Code | 1.90+ | `winget install Microsoft.VisualStudioCode --scope user` | macOS: `brew install --cask visual-studio-code`; Linux: not scripted |
 | `wsl` | WSL 2 (Windows only) | optional | **check only**: reported, never installed (it needs administrator rights and a restart) | - |

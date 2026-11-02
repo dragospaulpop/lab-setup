@@ -47,9 +47,15 @@ function Refresh-Path {              # pick up PATH changes made by installers
 function Add-UserPath($dir) {        # user PATH (registry) + this window
   Say "    > add to your user PATH: $dir"
   if ($DryRun) { return }
-  $u = [Environment]::GetEnvironmentVariable('Path', 'User')
-  if ($null -eq $u) { $u = '' }
-  if (($u -split ';') -notcontains $dir) { [Environment]::SetEnvironmentVariable('Path', "$dir;$u", 'User') }
+  # read and write the raw value: entries like %USERPROFILE%\bin stay as they are (REG_EXPAND_SZ)
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  $u = [string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+  if (($u -split ';') -notcontains $dir) {
+    $key.SetValue('Path', $(if ($u) { "$dir;$u" } else { $dir }), 'ExpandString')
+    # setting and clearing a user variable makes Windows tell running programs that the environment changed
+    [Environment]::SetEnvironmentVariable('LAB_SETUP_NOTIFY', '1', 'User'); [Environment]::SetEnvironmentVariable('LAB_SETUP_NOTIFY', $null, 'User')
+  }
+  $key.Close()
   if (($env:Path -split ';') -notcontains $dir) { $env:Path = "$dir;$env:Path" }
 }
 
@@ -77,28 +83,37 @@ function Check-Sha256($file, $expected) {
   Say "    SHA-256 matches."
 }
 
-function Winget($id) {               # user scope first; if the package has no user installer, ask for the default
+function Winget($id) {               # user scope; a package with no per-user installer says NEEDS ADMIN
   if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { throw 'winget not found (install "App Installer" from the Microsoft Store)' }
   $common = @('--id', $id, '--exact', '--silent', '--accept-package-agreements', '--accept-source-agreements')
   Run "winget install $id --scope user" { winget install @common --scope user }
-  if (-not $DryRun -and $LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {   # -1978335189 = already up to date
-    Say "    no user-scope installer for $id; trying the default (this one may ask for administrator rights)"
-    winget install @common
+  if (-not $DryRun) {
+    $code = $LASTEXITCODE
+    if ($code -eq -1978335216) {   # no applicable installer: the package has no per-user installer
+      Say "    NEEDS ADMIN: $id has no per-user installer. Windows will ask for an administrator's password; on a lab PC without one, ask the lab."
+      winget install @common
+      $code = $LASTEXITCODE
+    }
+    if ($code -ne 0 -and $code -ne -1978335189) { throw "winget exited with code $code for $id" }   # -1978335189 = already up to date
   }
   Refresh-Path
 }
 
 function Unpack-Zip($url, $sha, $dest) {   # download, verify, unpack the zip's one top folder as $dest (replacing it)
+  if (-not $sha) { throw "no checksum found for ${url}: not installing a download that cannot be checked" }
   $tmp = Join-Path $env:TEMP ('lab-setup-' + [guid]::NewGuid().ToString('N'))
+  $stage = Join-Path (Split-Path $dest) '.lab-setup-stage'   # unpacked next to its target: short paths (260-character limit)
   Run "mkdir $tmp" { New-Item -ItemType Directory -Force $tmp | Out-Null }
   Download $url "$tmp\pkg.zip"
-  if ($sha) { Check-Sha256 "$tmp\pkg.zip" $sha }
-  Run "unpack into $dest" {
-    Expand-Archive -Path "$tmp\pkg.zip" -DestinationPath "$tmp\out" -Force
+  Check-Sha256 "$tmp\pkg.zip" $sha
+  Run "unpack into $dest (tar -xf, much faster than Expand-Archive)" {
+    if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+    New-Item -ItemType Directory -Force $stage | Out-Null
+    tar.exe -xf "$tmp\pkg.zip" -C $stage
+    if ($LASTEXITCODE -ne 0) { throw 'tar.exe could not unpack the zip' }
     if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-    New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
-    Move-Item (Get-ChildItem "$tmp\out")[0].FullName $dest
-    Remove-Item -Recurse -Force $tmp
+    Move-Item (Get-ChildItem $stage)[0].FullName $dest
+    Remove-Item -Recurse -Force $stage, $tmp
   }
 }
 
@@ -198,4 +213,10 @@ Say ''
 if ($DryRun) { Say 'Dry run: nothing was changed.'; Show-Table; return }
 Say 'Checking again:'
 Show-Table
+$bad = @($selected | Where-Object { -not $_.CheckOnly -and $_.Status -ne 'ok' })
+if ($bad.Count -gt 0) {
+  Say ('FAILED: still not ok after the install: ' + (($bad | ForEach-Object { $_.Name }) -join ', '))
+  if ($PSCommandPath) { exit 1 }      # run as a file: the exit code says so
+  $global:LASTEXITCODE = 1; return    # run with irm | iex: exit would close the student's window
+}
 Say 'Open a NEW PowerShell window to be sure every tool is on its PATH.'

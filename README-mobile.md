@@ -8,16 +8,16 @@
 | id | Tool | Needed | Windows route (your user, no admin) | macOS / Linux route |
 | --- | --- | --- | --- | --- |
 | `git` | Git | 2.30+ | `winget install Git.Git --scope user` | `brew install git`; `xcode-select --install`; `apt-get install git` |
-| `gh` | GitHub CLI | 2.40+ | `winget install GitHub.cli --scope user` (the portable zip; the MSI is machine-wide) | `brew install gh`; `apt-get install gh` |
-| `node` | Node.js LTS | 22+ | the official zip from nodejs.org into `%LOCALAPPDATA%\node`, SHA-256 from `SHASUMS256.txt` (winget's package is machine-wide and **needs admin**) | `brew install node`; else the official tarball into `~/.local/node` with the same checksum check |
+| `gh` | GitHub CLI | 2.40+ | `winget install GitHub.cli --scope user` (the portable zip; the MSI is machine-wide) | `brew install gh`; Linux: GitHub's apt repository (Ubuntu's own `gh` is older than 2.40) |
+| `node` | Node.js LTS | 22+ | the official zip from nodejs.org into `%LOCALAPPDATA%\node`, SHA-256 from `SHASUMS256.txt` (winget's package is machine-wide and **needs admin**) | `brew install node@<LTS major>` (plain `node` is the Current release); else the official tarball into `~/.local/node` with the same checksum check |
 | `bun` | Bun | 1.1+ | `winget install Oven-sh.Bun` (portable zip) | `brew install oven-sh/bun/bun`; else bun.sh's install script |
 | `code` | VS Code | 1.90+ | `winget install Microsoft.VisualStudioCode --scope user` (the user installer) | macOS: `brew install --cask visual-studio-code`; Linux: not scripted (use the Windows VS Code from WSL) |
-| `jdk` | JDK | 17+ (21 installed) | **Android Studio's own JDK** if the PC has Android Studio (nothing to download); else the Microsoft Build of OpenJDK 21 zip into `%LOCALAPPDATA%\Programs\jdk-21`, checksum from Microsoft's `.sha256sum.txt` (winget's package is machine-wide and **needs admin**) | `brew install openjdk@21`; else Microsoft's OpenJDK 21 tarball into `~/.local/jdk-21` |
+| `jdk` | JDK | 17+ (21 installed) | **Android Studio's own JDK** if the PC has Android Studio and neither `JAVA_HOME` nor `PATH` reaches a JDK yet (nothing to download; the script sets `JAVA_HOME` to it); else the Microsoft Build of OpenJDK 21 zip into `%LOCALAPPDATA%\Programs\jdk-21`, checksum from Microsoft's `.sha256sum.txt` (winget's package is machine-wide and **needs admin**) | `brew install openjdk@21`; else Microsoft's OpenJDK 21 tarball into `~/.local/jdk-21` |
 | `android` | Android SDK (**slow**) | API 36, platform-tools, build-tools 36.0.0, emulator | Google's command-line tools zip (SHA-256 pinned in the script, from the download page) into `%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest`, then `sdkmanager` | the same, into `~/Android/Sdk` |
 | `image` | Emulator image (**slow**) | `system-images;android-36;google_apis;x86_64` and the AVD `Pixel_7_API_36` | `sdkmanager --install ...`, then `avdmanager create avd` | the same (`arm64-v8a` on Apple Silicon and ARM Linux) |
-| `flutter` | Flutter | 3.47+ stable | the stable zip from Flutter's release list (`releases_windows.json`, SHA-256 from it) into `%USERPROFILE%\develop\flutter`; an existing one gets `flutter upgrade` | the stable archive from `releases_linux.json` / `releases_macos.json` into `~/develop/flutter` (needs `python3` to read the list) |
-| `supabase` | Supabase CLI | 2.0+ | Scoop (installed first if missing, no admin): `scoop bucket add supabase ...`, `scoop install supabase/supabase` | `brew install supabase/tap/supabase`; Linux without brew: the `.deb` from GitHub Releases (`dpkg`, sudo) |
-| `firebase` | Firebase CLI | 15+ | `npm install -g firebase-tools` (sets npm's prefix to `%APPDATA%\npm` first if the default is under Program Files) | the same (prefix `~/.local` if the default is not writable) |
+| `flutter` | Flutter | 3.47+ stable | the stable zip from Flutter's release list (`releases_windows.json`, SHA-256 from it), unpacked with `tar.exe` into `%USERPROFILE%\develop\flutter`; an existing one gets `flutter upgrade` | the stable archive from `releases_linux.json` / `releases_macos.json` into `~/develop/flutter` (needs `python3` to read the list) |
+| `supabase` | Supabase CLI | 2.0+ | Scoop (installed first if missing, no admin): `scoop bucket add supabase ...`, `scoop install supabase/supabase` | `brew install supabase/tap/supabase`; Linux without brew: the `.deb` from GitHub Releases, checked against the release's `checksums.txt` (`dpkg`, sudo) |
+| `firebase` | Firebase CLI | 15+ | `npm.cmd install -g firebase-tools` (`.cmd`, because the default execution policy blocks npm's `.ps1` shims; sets npm's prefix to `%APPDATA%\npm` first if the default is under Program Files) | the same (prefix `~/.local` if the default is not writable) |
 
 **Download size.** The Android SDK plus the emulator image are about 2.6 GB (command-line tools
 160 MB, emulator about 350 MB, platform and build-tools about 130 MB, system image about
@@ -36,6 +36,14 @@ works too.
 
 **Why a zip and not `git clone` for Flutter on Windows.** The repository's longest paths break
 Windows' 260-character limit (measured in week 4).
+
+**npm, bun, firebase and "running scripts is disabled".** The default PowerShell policy blocks `.ps1`
+files, which is what `npm` and `firebase` can resolve to. The script calls `npm.cmd` and `firebase.cmd`.
+For `firebase` itself to work in your window, type `firebase.cmd`, or (your account only, no administrator;
+on a shared lab PC ask first) `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+**Linux without Homebrew.** The script runs `sudo apt-get update` once, installs `curl`, `unzip`, `xz-utils`
+and `python3` when they are missing (stock WSL Ubuntu has no `unzip`), and adds GitHub's apt repository for `gh`.
 
 **Needs admin?** None of the routes above, on Windows or Linux with Homebrew. Linux without
 Homebrew: `apt-get install` for Git and the GitHub CLI and `dpkg -i` for the Supabase CLI ask for

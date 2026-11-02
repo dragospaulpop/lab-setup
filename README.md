@@ -80,13 +80,23 @@ computer is not touched.)
 - `PATH`, `JAVA_HOME` and `ANDROID_HOME` are set in **your user environment** (the Windows
   user registry; `~/.bashrc` or `~/.zprofile`) and in the window that runs the script, so the
   re-check sees them. Open a new terminal afterwards.
-- Nothing machine-wide: no `Set-ExecutionPolicy` at machine scope (Scoop's own scripts need
-  `RemoteSigned`, set for that one PowerShell process only).
+- Nothing machine-wide: no `Set-ExecutionPolicy` at machine scope. Scoop's own scripts need
+  `RemoteSigned`, which the script sets for the PowerShell window it runs in (Process scope;
+  with `irm | iex` that lasts until you close the window). If the computer's own policy
+  forbids it, the script says so and stops that tool.
+- The user `PATH` is written back unexpanded (`%VAR%` entries stay `%VAR%`).
 - No telemetry. Every download comes from the tool's official site (the URL is in the script);
-  where the site publishes a checksum, the script checks it and stops on a mismatch. Some
+  where the site publishes a checksum, the script checks it and stops on a mismatch, and it
+  refuses a download it cannot find a checksum for. Be clear about what that proves: a checksum
+  fetched from the same site as the file (Node, the JDK, Flutter, the Supabase `.deb`) catches a
+  corrupted or truncated download, not a compromised site; only the Android command-line
+  tools' checksum is written into the script itself, copied from Google's download page. Some
   routes run the vendor's own installer (`irm https://get.scoop.sh | iex`,
   `curl -fsSL https://bun.com/install | bash`): the script says so first, and that line is the
   vendor's documented install line, not ours.
+- A run with `-Install` / `--install` ends with exit code 1 (and a `FAILED:` line) when a tool
+  is still not ok afterwards; a check-only run exits 0. Under `irm | iex` the PowerShell
+  script cannot exit (that would close your window); it sets `$LASTEXITCODE` to 1 instead.
 - Plain ASCII, Windows PowerShell 5.1 and PowerShell 7, bash 3.2 and newer.
 
 ## Test notes

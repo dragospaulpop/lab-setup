@@ -56,9 +56,15 @@ function Refresh-Path {              # pick up PATH changes made by installers
 function Add-UserPath($dir) {        # user PATH (registry) + this window
   Say "    > add to your user PATH: $dir"
   if ($DryRun) { return }
-  $u = [Environment]::GetEnvironmentVariable('Path', 'User')
-  if ($null -eq $u) { $u = '' }
-  if (($u -split ';') -notcontains $dir) { [Environment]::SetEnvironmentVariable('Path', "$dir;$u", 'User') }
+  # read and write the raw value: entries like %USERPROFILE%\bin stay as they are (REG_EXPAND_SZ)
+  $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  $u = [string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+  if (($u -split ';') -notcontains $dir) {
+    $key.SetValue('Path', $(if ($u) { "$dir;$u" } else { $dir }), 'ExpandString')
+    # setting and clearing a user variable makes Windows tell running programs that the environment changed
+    [Environment]::SetEnvironmentVariable('LAB_SETUP_NOTIFY', '1', 'User'); [Environment]::SetEnvironmentVariable('LAB_SETUP_NOTIFY', $null, 'User')
+  }
+  $key.Close()
   if (($env:Path -split ';') -notcontains $dir) { $env:Path = "$dir;$env:Path" }
 }
 
@@ -86,28 +92,37 @@ function Check-Sha256($file, $expected) {
   Say "    SHA-256 matches."
 }
 
-function Winget($id) {               # user scope first; if the package has no user installer, ask for the default
+function Winget($id) {               # user scope; a package with no per-user installer says NEEDS ADMIN
   if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { throw 'winget not found (install "App Installer" from the Microsoft Store)' }
   $common = @('--id', $id, '--exact', '--silent', '--accept-package-agreements', '--accept-source-agreements')
   Run "winget install $id --scope user" { winget install @common --scope user }
-  if (-not $DryRun -and $LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {   # -1978335189 = already up to date
-    Say "    no user-scope installer for $id; trying the default (this one may ask for administrator rights)"
-    winget install @common
+  if (-not $DryRun) {
+    $code = $LASTEXITCODE
+    if ($code -eq -1978335216) {   # no applicable installer: the package has no per-user installer
+      Say "    NEEDS ADMIN: $id has no per-user installer. Windows will ask for an administrator's password; on a lab PC without one, ask the lab."
+      winget install @common
+      $code = $LASTEXITCODE
+    }
+    if ($code -ne 0 -and $code -ne -1978335189) { throw "winget exited with code $code for $id" }   # -1978335189 = already up to date
   }
   Refresh-Path
 }
 
 function Unpack-Zip($url, $sha, $dest) {   # download, verify, unpack the zip's one top folder as $dest (replacing it)
+  if (-not $sha) { throw "no checksum found for ${url}: not installing a download that cannot be checked" }
   $tmp = Join-Path $env:TEMP ('lab-setup-' + [guid]::NewGuid().ToString('N'))
+  $stage = Join-Path (Split-Path $dest) '.lab-setup-stage'   # unpacked next to its target: short paths (260-character limit)
   Run "mkdir $tmp" { New-Item -ItemType Directory -Force $tmp | Out-Null }
   Download $url "$tmp\pkg.zip"
-  if ($sha) { Check-Sha256 "$tmp\pkg.zip" $sha }
-  Run "unpack into $dest" {
-    Expand-Archive -Path "$tmp\pkg.zip" -DestinationPath "$tmp\out" -Force
+  Check-Sha256 "$tmp\pkg.zip" $sha
+  Run "unpack into $dest (tar -xf, much faster than Expand-Archive)" {
+    if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+    New-Item -ItemType Directory -Force $stage | Out-Null
+    tar.exe -xf "$tmp\pkg.zip" -C $stage
+    if ($LASTEXITCODE -ne 0) { throw 'tar.exe could not unpack the zip' }
     if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-    New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
-    Move-Item (Get-ChildItem "$tmp\out")[0].FullName $dest
-    Remove-Item -Recurse -Force $tmp
+    Move-Item (Get-ChildItem $stage)[0].FullName $dest
+    Remove-Item -Recurse -Force $stage, $tmp
   }
 }
 
@@ -120,7 +135,6 @@ function Find-Java {
   if ($env:JAVA_HOME) { $cands += "$env:JAVA_HOME\bin\java.exe" }
   $onPath = Get-Command java -ErrorAction SilentlyContinue
   if ($onPath) { $cands += $onPath.Source }
-  $cands += "$StudioJbr\bin\java.exe"
   foreach ($c in $cands) { if (Test-Path $c) { return $c } }
   return $null
 }
@@ -242,28 +256,32 @@ $Tools = @(
   @{ Id = 'supabase'; Name = 'Supabase CLI'; Needed = '2.0+'; Min = '2.0'
      Get = { Get-Ver (Native supabase @('--version')) }
      Setup = {   # not on winget: Scoop is the route supabase.com/docs documents for Windows
-       # Scoop's own scripts need RemoteSigned; this window only (Process scope), never the machine
-       try { Set-ExecutionPolicy RemoteSigned -Scope Process -Force } catch { Say "    (could not relax the execution policy for this window: $($_.Exception.Message))" }
+       # Scoop's own scripts need RemoteSigned: for this PowerShell window only (Process scope; with irm | iex it lasts until you close it)
+       Run 'Set-ExecutionPolicy RemoteSigned -Scope Process' { try { Set-ExecutionPolicy RemoteSigned -Scope Process -Force -ErrorAction Stop } catch { } }
+       if (-not $DryRun -and (Get-ExecutionPolicy) -in 'Restricted', 'AllSigned') {
+         throw "this computer's policy ($(Get-ExecutionPolicy)) blocks Scoop's scripts and this window cannot change it: install the Supabase CLI another way (README-mobile.md)"
+       }
        if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
          Say '    Scoop (a user-level installer, no admin) is not installed: installing it from https://get.scoop.sh'
          Run 'irm https://get.scoop.sh | iex' { Invoke-RestMethod https://get.scoop.sh | Invoke-Expression }
          Refresh-Path
        }
-       if (-not ((scoop bucket list | Out-String) -match 'supabase')) { Run 'scoop bucket add supabase' { scoop bucket add supabase https://github.com/supabase/scoop-bucket.git } }
+       $haveBucket = (-not $DryRun) -and ((scoop bucket list | Out-String) -match 'supabase')
+       if (-not $haveBucket) { Run 'scoop bucket add supabase' { scoop bucket add supabase https://github.com/supabase/scoop-bucket.git } }
        Run 'scoop install supabase/supabase' { scoop install supabase/supabase }
        Run 'scoop update supabase' { scoop update supabase }
        Refresh-Path
      } },
 
   @{ Id = 'firebase'; Name = 'Firebase CLI'; Needed = '15+'; Min = '15.0'
-     Get = { Get-Ver (Native firebase @('--version')) }
+     Get = { Get-Ver (Native firebase.cmd @('--version')) }   # .cmd: the .ps1 shims are blocked by the default execution policy
      Setup = {   # firebase.google.com/docs/cli: npm install -g firebase-tools
-       $prefix = ((Native npm @('config', 'get', 'prefix')) -split "`n" | Select-Object -First 1).Trim()
+       $prefix = ((Native npm.cmd @('config', 'get', 'prefix')) -split "`n" | Select-Object -First 1).Trim()
        if ($prefix -like "$env:ProgramFiles*") {
-         Run "npm config set prefix $env:APPDATA\npm  (the default one is admin-only)" { npm config set prefix (Join-Path $env:APPDATA 'npm') }
+         Run "npm config set prefix $env:APPDATA\npm  (the default one is admin-only)" { npm.cmd config set prefix (Join-Path $env:APPDATA 'npm') }
          Add-UserPath (Join-Path $env:APPDATA 'npm')
        }
-       Run 'npm install -g firebase-tools' { npm install -g firebase-tools }
+       Run 'npm install -g firebase-tools' { npm.cmd install -g firebase-tools; if ($LASTEXITCODE -ne 0) { throw 'npm install failed' } }
      } }
 )
 
@@ -322,4 +340,10 @@ Say ''
 if ($DryRun) { Say 'Dry run: nothing was changed.'; Show-Table; return }
 Say 'Checking again:'
 Show-Table
+$bad = @($selected | Where-Object { -not $_.CheckOnly -and $_.Status -ne 'ok' })
+if ($bad.Count -gt 0) {
+  Say ('FAILED: still not ok after the install: ' + (($bad | ForEach-Object { $_.Name }) -join ', '))
+  if ($PSCommandPath) { exit 1 }      # run as a file: the exit code says so
+  $global:LASTEXITCODE = 1; return    # run with irm | iex: exit would close the student's window
+}
 Say 'Open a NEW PowerShell window to be sure every tool is on its PATH.'
